@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+
+# Virtual environments
+.venv/
+venv/
+
+# Node / frontend
+node_modules/
+frontend/node_modules/
+frontend/dist/
+
+# Environment files
+.env
+.env.*
+frontend/.env
+
+# OS/editor
+.DS_Store
+Thumbs.db
+
+# Local runtime artifacts
+*.log
+
+# SQLite database artifacts
+database/*.db
+database/*.sqlite
+database/*.sqlite3
