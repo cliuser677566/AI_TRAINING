@@ -1,13 +1,24 @@
-from fastapi import APIRouter, Depends
-from typing import List
-from backend.app.db.session import get_db
-from backend.app.db import models
-from backend.app.schemas import CustomerOut
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, HTTPException
+import sqlite3
+from backend.app.core.config import DATABASE_PATH
 
 router = APIRouter(prefix="/customers", tags=["customers"])
 
 
-@router.get("/", response_model=List[CustomerOut])
-def list_customers(limit: int = 100, db: Session = Depends(get_db)):
-    return db.query(models.Customer).limit(limit).all()
+@router.get("/")
+def list_customers(limit: int = 200):
+    conn = sqlite3.connect(DATABASE_PATH)
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT customer_id, state_id FROM customers LIMIT ?",
+            (limit,),
+        )
+        rows = cur.fetchall()
+        return [
+            {"customer_id": r[0], "name": f"Customer {r[0]}", "state_id": r[1]} for r in rows
+        ]
+    except sqlite3.Error as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()

@@ -70,7 +70,7 @@ export default function App() {
   const [statusMessage, setStatusMessage] = useState("");
 
   const [newSale, setNewSale] = useState({ sku_id: "", state_id: "", quantity: 1, price: 20 });
-  const [shipment, setShipment] = useState({ sku_id: "", quantity: 100, from_state_id: "", to_state_id: "" });
+  const [shipment, setShipment] = useState({ sku_id: "", quantity_units: 100, from_state_id: "", to_state_id: "" });
 
   const [newSku, setNewSku] = useState({
     flavor: "",
@@ -137,11 +137,12 @@ export default function App() {
       setStatusMessage("Recording sale...");
       await ingestSales([
         {
-          sku_id: Number(newSale.sku_id),
+          sku_id: newSale.sku_id,
           customer_id: null,
           state_id: Number(newSale.state_id),
-          quantity: Number(newSale.quantity),
-          price: Number(newSale.price)
+          quantity_units: Number(newSale.quantity),
+          price: Number(newSale.price),
+          transaction_date: null
         }
       ]);
       setStatusMessage("Sale recorded.");
@@ -156,8 +157,8 @@ export default function App() {
     try {
       setStatusMessage("Creating shipment...");
       const response = await createShipment({
-        sku_id: Number(shipment.sku_id),
-        quantity: Number(shipment.quantity),
+        sku_id: shipment.sku_id,
+        quantity_units: Number(shipment.quantity_units),
         from_state_id: Number(shipment.from_state_id),
         to_state_id: Number(shipment.to_state_id)
       });
@@ -336,7 +337,7 @@ export default function App() {
           </div>
           <label>
             Quantity
-            <input type="number" min="1" value={shipment.quantity} onChange={(e) => setShipment({ ...shipment, quantity: e.target.value })} />
+            <input type="number" min="1" value={shipment.quantity_units} onChange={(e) => setShipment({ ...shipment, quantity_units: e.target.value })} />
           </label>
           <button type="submit">Create Shipment</button>
         </form>

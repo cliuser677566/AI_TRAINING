@@ -1,5 +1,4 @@
 from fastapi import APIRouter, HTTPException
-from typing import List, Dict
 import sqlite3
 from backend.app.core.config import DATABASE_PATH
 
@@ -13,7 +12,7 @@ def sales_by_state(limit: int = 100):
     try:
         cur.execute(
             """
-            SELECT s.state_id, s.state_name, SUM(st.quantity * st.price) as revenue, SUM(st.quantity) as units
+            SELECT s.state_id, s.state_name, SUM(st.transaction_amount) as revenue, SUM(st.quantity_units) as units
             FROM sales_transactions st
             JOIN states s ON st.state_id = s.state_id
             GROUP BY s.state_id, s.state_name
@@ -41,10 +40,10 @@ def sku_performance(limit: int = 100):
     try:
         cur.execute(
             """
-            SELECT sk.sku_id, sk.sku_name, SUM(st.quantity) as units_sold, SUM(st.quantity * st.price) as revenue
+            SELECT sk.sku_id, sk.product_name, SUM(st.quantity_units) as units_sold, SUM(st.transaction_amount) as revenue
             FROM sales_transactions st
             JOIN skus sk ON st.sku_id = sk.sku_id
-            GROUP BY sk.sku_id, sk.sku_name
+            GROUP BY sk.sku_id, sk.product_name
             ORDER BY revenue DESC
             LIMIT ?
             """,
