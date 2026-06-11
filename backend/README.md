@@ -49,6 +49,12 @@ Guardrails in chatbot:
 - Answers only DRINKOO SKU/flavor/order topics.
 - Blocks prompt-injection style requests and DB-modification intents.
 
+Observability (internal-only):
+- Backend now records request lifecycle events and failures in SQLite table `app_observability_events`.
+- Chatbot logs failure points (guardrail blocks, retrieval misses, model failures, query failures) and successful responses.
+- Frontend sends journey and click telemetry to write-only endpoint `POST /telemetry/events`.
+- There is no endpoint that exposes logs to users; logs are server-side only.
+
 Optional admin SQL debug mode (disabled by default):
 - Set env vars:
 	- `CHATBOT_SQL_DEBUG_ENABLED=1`

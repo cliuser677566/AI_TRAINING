@@ -1,13 +1,16 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  checkBackendHealth,
   createShipment,
   getCustomers,
+  getServiceStatus,
   getSalesByState,
   getSkuPerformance,
   getSkus,
   getStates,
   ingestSales,
   login,
+  postTelemetryEvent,
   sendChatMessage
 } from "./api";
 
@@ -60,9 +63,110 @@ function formatMoney(v) {
   return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(v || 0);
 }
 
+function StatusPage() {
+  const [networkOnline, setNetworkOnline] = useState(typeof navigator !== "undefined" ? navigator.onLine : true);
+  const [statusData, setStatusData] = useState(null);
+  const [statusError, setStatusError] = useState("");
+  const [lastCheckedAt, setLastCheckedAt] = useState("");
+
+  useEffect(() => {
+    function onOnline() {
+      setNetworkOnline(true);
+    }
+
+    function onOffline() {
+      setNetworkOnline(false);
+    }
+
+    window.addEventListener("online", onOnline);
+    window.addEventListener("offline", onOffline);
+    return () => {
+      window.removeEventListener("online", onOnline);
+      window.removeEventListener("offline", onOffline);
+    };
+  }, []);
+
+  useEffect(() => {
+    async function loadStatus() {
+      setLastCheckedAt(new Date().toLocaleTimeString());
+      if (!networkOnline) {
+        setStatusData(null);
+        setStatusError("Browser is offline");
+        return;
+      }
+      try {
+        const data = await getServiceStatus();
+        setStatusData(data);
+        setStatusError("");
+      } catch (err) {
+        setStatusData(null);
+        setStatusError(err?.message || "Status endpoint unavailable");
+      }
+    }
+
+    loadStatus();
+    const timer = setInterval(loadStatus, 15000);
+    return () => clearInterval(timer);
+  }, [networkOnline]);
+
+  const apiOnline = Boolean(statusData && statusData.components?.api === "online");
+  const dbOnline = Boolean(statusData && statusData.components?.database === "online");
+  const appOnline = networkOnline && apiOnline && dbOnline;
+
+  return (
+    <div className="status-shell">
+      <div className="status-card card">
+        <h1>DRINKOO Status</h1>
+        <p>Standalone service health page</p>
+        <div className={`health-chip ${appOnline ? "online" : "offline"}`}>
+          <span className="health-dot" />
+          {appOnline ? "All Systems Operational" : "Service Disruption Detected"}
+        </div>
+
+        <div className="status-grid">
+          <div className="status-item">
+            <div className="status-label">Browser Network</div>
+            <div className={`status-value ${networkOnline ? "online" : "offline"}`}>{networkOnline ? "Online" : "Offline"}</div>
+          </div>
+          <div className="status-item">
+            <div className="status-label">Backend API</div>
+            <div className={`status-value ${apiOnline ? "online" : "offline"}`}>{apiOnline ? "Online" : "Offline"}</div>
+          </div>
+          <div className="status-item">
+            <div className="status-label">Database</div>
+            <div className={`status-value ${dbOnline ? "online" : "offline"}`}>{dbOnline ? "Online" : "Offline"}</div>
+          </div>
+        </div>
+
+        {statusError ? <div className="error">{statusError}</div> : null}
+        {statusData?.database_error ? <div className="error">DB error: {statusData.database_error}</div> : null}
+        <div className="status-meta">Last checked: {lastCheckedAt || "-"}</div>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
+  if (window.location.pathname === "/status") {
+    return <StatusPage />;
+  }
+
+  const appSessionId = useMemo(() => {
+    const existing = localStorage.getItem("drinkoo_observability_session");
+    if (existing) {
+      return existing;
+    }
+    const generated = `obs_${Math.random().toString(36).slice(2, 10)}`;
+    localStorage.setItem("drinkoo_observability_session", generated);
+    return generated;
+  }, []);
+
+  const clickLogRef = useRef({});
+
   const [token, setToken] = useState(localStorage.getItem("drinkoo_token"));
   const [loginError, setLoginError] = useState("");
+  const [networkOnline, setNetworkOnline] = useState(typeof navigator !== "undefined" ? navigator.onLine : true);
+  const [backendOnline, setBackendOnline] = useState(true);
 
   const [states, setStates] = useState([]);
   const [skus, setSkus] = useState([]);
@@ -105,7 +209,48 @@ export default function App() {
     return salesByState.filter((s) => String(s.state_id) === String(selectedStateId));
   }, [salesByState, selectedStateId]);
 
+  function trackEvent(eventType, action, options = {}) {
+    postTelemetryEvent({
+      event_type: eventType,
+      action,
+      page: window.location.pathname,
+      session_id: appSessionId,
+      success: options.success !== false,
+      error_code: options.errorCode,
+      error_message: options.errorMessage,
+      metadata: options.metadata || {}
+    }).catch(() => {
+      // Telemetry never blocks user actions.
+    });
+  }
+
+  function handleUiClickCapture(e) {
+    const target = e.target.closest("button, a, select, input[type='checkbox'], input[type='submit']");
+    if (!target) {
+      return;
+    }
+    const rawLabel =
+      target.getAttribute("aria-label") ||
+      target.textContent ||
+      target.getAttribute("name") ||
+      target.className ||
+      target.tagName;
+    const label = String(rawLabel).replace(/\s+/g, " ").trim().slice(0, 80) || "unknown";
+
+    const key = `${target.tagName}:${label}`;
+    const now = Date.now();
+    const lastSeen = clickLogRef.current[key] || 0;
+    if (now - lastSeen < 700) {
+      return;
+    }
+    clickLogRef.current[key] = now;
+    trackEvent("ui.click", "interact", {
+      metadata: { element: target.tagName.toLowerCase(), label }
+    });
+  }
+
   async function loadDashboard() {
+    trackEvent("journey.dashboard_load", "begin");
     const [stateData, skuData, customerData, stateSalesData, skuPerfData] = await Promise.all([
       getStates(),
       getSkus(),
@@ -118,7 +263,52 @@ export default function App() {
     setCustomers(customerData);
     setSalesByState(stateSalesData);
     setSkuPerformance(skuPerfData);
+    trackEvent("journey.dashboard_load", "complete", {
+      metadata: {
+        states: stateData.length,
+        skus: skuData.length,
+        customers: customerData.length
+      }
+    });
   }
+
+  useEffect(() => {
+    function setOnline() {
+      setNetworkOnline(true);
+      trackEvent("system.network", "online");
+    }
+
+    function setOffline() {
+      setNetworkOnline(false);
+      trackEvent("system.network", "offline", { success: false });
+    }
+
+    window.addEventListener("online", setOnline);
+    window.addEventListener("offline", setOffline);
+    return () => {
+      window.removeEventListener("online", setOnline);
+      window.removeEventListener("offline", setOffline);
+    };
+  }, []);
+
+  useEffect(() => {
+    async function pingBackend() {
+      if (!networkOnline) {
+        setBackendOnline(false);
+        return;
+      }
+      try {
+        await checkBackendHealth();
+        setBackendOnline(true);
+      } catch {
+        setBackendOnline(false);
+      }
+    }
+
+    pingBackend();
+    const timer = setInterval(pingBackend, 15000);
+    return () => clearInterval(timer);
+  }, [networkOnline]);
 
   useEffect(() => {
     if (!token) {
@@ -127,6 +317,11 @@ export default function App() {
 
     loadDashboard().catch((e) => {
       setStatusMessage(`Failed to load dashboard: ${e.message}`);
+      trackEvent("journey.dashboard_load", "failed", {
+        success: false,
+        errorCode: "dashboard_load_failed",
+        errorMessage: e.message
+      });
     });
   }, [token]);
 
@@ -136,12 +331,18 @@ export default function App() {
       const result = await login(username, password);
       localStorage.setItem("drinkoo_token", result.access_token);
       setToken(result.access_token);
+      trackEvent("journey.login", "success", { metadata: { username } });
     } catch {
       setLoginError("Invalid credentials. Use admin/password in non-production.");
+      trackEvent("journey.login", "failed", {
+        success: false,
+        errorCode: "invalid_credentials"
+      });
     }
   }
 
   function logout() {
+    trackEvent("journey.logout", "click");
     localStorage.removeItem("drinkoo_token");
     setToken(null);
   }
@@ -156,6 +357,7 @@ export default function App() {
     setChatMessages((prev) => [...prev, { role: "user", text }]);
     setChatInput("");
     setChatLoading(true);
+    trackEvent("journey.chat", "message_sent", { metadata: { length: text.length } });
 
     try {
       const result = await sendChatMessage(text, chatSessionId || null, {
@@ -171,9 +373,22 @@ export default function App() {
           ? ` (remaining: ${result.remaining_messages})`
           : "";
       const debugSqlText = result.debug?.sql ? `\nSQL: ${result.debug.sql}` : "";
+      const failureSignature =
+        String(result.reply || "").includes("I could not find") ||
+        String(result.reply || "").includes("I can only answer") ||
+        String(result.reply || "").includes("supports up to 4 messages");
+      trackEvent("journey.chat", failureSignature ? "message_handled_with_limit" : "message_handled", {
+        success: !failureSignature,
+        errorCode: failureSignature ? "chat_limited_or_no_answer" : undefined
+      });
       setChatMessages((prev) => [...prev, { role: "assistant", text: `${result.reply}${suffix}${debugSqlText}` }]);
     } catch (err) {
       setChatMessages((prev) => [...prev, { role: "assistant", text: "Chat is temporarily unavailable. Please try again." }]);
+      trackEvent("journey.chat", "request_failed", {
+        success: false,
+        errorCode: "chat_request_failed",
+        errorMessage: err?.message || "unknown"
+      });
     } finally {
       setChatLoading(false);
     }
@@ -195,8 +410,20 @@ export default function App() {
       ]);
       setStatusMessage("Sale recorded.");
       await loadDashboard();
+      trackEvent("journey.sale", "submit_success", {
+        metadata: {
+          sku_id: newSale.sku_id,
+          state_id: newSale.state_id,
+          quantity: Number(newSale.quantity)
+        }
+      });
     } catch (e2) {
       setStatusMessage(`Sale ingestion failed: ${e2.message}`);
+      trackEvent("journey.sale", "submit_failed", {
+        success: false,
+        errorCode: "sale_ingest_failed",
+        errorMessage: e2.message
+      });
     }
   }
 
@@ -211,8 +438,20 @@ export default function App() {
         to_state_id: Number(shipment.to_state_id)
       });
       setStatusMessage(`Shipment created. ID: ${response.shipment_id}`);
+      trackEvent("journey.shipment", "submit_success", {
+        metadata: {
+          sku_id: shipment.sku_id,
+          from_state_id: shipment.from_state_id,
+          to_state_id: shipment.to_state_id
+        }
+      });
     } catch (e2) {
       setStatusMessage(`Shipment failed: ${e2.message}`);
+      trackEvent("journey.shipment", "submit_failed", {
+        success: false,
+        errorCode: "shipment_create_failed",
+        errorMessage: e2.message
+      });
     }
   }
 
@@ -230,13 +469,18 @@ export default function App() {
 
   const totalRevenue = filteredSalesByState.reduce((acc, x) => acc + (x.revenue || 0), 0);
   const totalUnits = filteredSalesByState.reduce((acc, x) => acc + (x.units || 0), 0);
+  const appOnline = networkOnline && backendOnline;
 
   return (
-    <div className="app-shell">
+    <div className="app-shell" onClickCapture={handleUiClickCapture}>
       <header className="topbar">
         <div>
           <h1>DRINKOO Dashboard</h1>
           <p>State-wise sales, SKU management and shipment orchestration</p>
+          <div className={`health-chip ${appOnline ? "online" : "offline"}`}>
+            <span className="health-dot" />
+            {appOnline ? "App Online" : "App Offline"}
+          </div>
         </div>
         <div className="topbar-actions">
           <select value={selectedStateId} onChange={(e) => setSelectedStateId(e.target.value)}>
@@ -452,7 +696,14 @@ export default function App() {
 
       {statusMessage ? <div className="toast">{statusMessage}</div> : null}
 
-      <button className="chat-toggle" onClick={() => setChatOpen((v) => !v)}>
+      <button
+        className="chat-toggle"
+        onClick={() => {
+          const next = !chatOpen;
+          setChatOpen(next);
+          trackEvent("journey.chat", next ? "open" : "close");
+        }}
+      >
         {chatOpen ? "Close Chat" : "Chat with DRINKOO"}
       </button>
 

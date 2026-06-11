@@ -8,6 +8,7 @@ from typing import Dict, List, Tuple
 import requests
 
 from backend.app.core.config import DATABASE_PATH, OPENROUTER_API_KEY, OPENROUTER_MODEL
+from backend.app.services.observability import log_observability_event
 
 
 EMBED_DIM = 128
@@ -433,11 +434,23 @@ def handle_chat_message(
     message: str,
     session_id: str | None,
     include_sql_debug: bool = False,
+    user_id: str | None = None,
+    client_ip: str | None = None,
 ) -> Dict[str, str | int | dict]:
     if not session_id:
         session_id = f"sess_{uuid.uuid4().hex[:12]}"
 
     if len(message or "") > MAX_USER_MESSAGE_LEN:
+        log_observability_event(
+            source="chatbot",
+            event_type="chat.validation_failed",
+            action="message_too_long",
+            success=False,
+            user_id=user_id,
+            session_id=session_id,
+            client_ip=client_ip,
+            detail={"message_length": len(message or "")},
+        )
         return {
             "session_id": session_id,
             "reply": "Please keep your message short so I can quickly help with SKUs and orders.",
@@ -449,6 +462,16 @@ def handle_chat_message(
 
     remaining = max(0, MAX_MESSAGES_PER_SESSION - state["count"])
     if state["count"] > MAX_MESSAGES_PER_SESSION:
+        log_observability_event(
+            source="chatbot",
+            event_type="chat.limit_reached",
+            action="session_message_cap",
+            success=False,
+            user_id=user_id,
+            session_id=session_id,
+            client_ip=client_ip,
+            detail={"message_count": state["count"]},
+        )
         return {
             "session_id": session_id,
             "reply": "For cost control, this chat supports up to 4 messages. Please start a new chat session.",
@@ -457,9 +480,27 @@ def handle_chat_message(
 
     violated, reason = _is_guardrail_violation(message)
     if violated:
+        log_observability_event(
+            source="chatbot",
+            event_type="chat.guardrail_blocked",
+            action="policy_violation",
+            success=False,
+            user_id=user_id,
+            session_id=session_id,
+            client_ip=client_ip,
+        )
         return {"session_id": session_id, "reply": reason, "remaining_messages": remaining}
 
     if not _is_domain_relevant(message):
+        log_observability_event(
+            source="chatbot",
+            event_type="chat.domain_rejected",
+            action="out_of_scope",
+            success=False,
+            user_id=user_id,
+            session_id=session_id,
+            client_ip=client_ip,
+        )
         return {
             "session_id": session_id,
             "reply": "I can only answer DRINKOO SKU, flavor, recommendation, and order-related questions.",
@@ -472,6 +513,16 @@ def handle_chat_message(
             sql, params = _build_text_to_sql(message)
             cols, rows = _safe_run_readonly_query(sql, params)
             reply = _format_sql_result_reply(cols, rows)
+            log_observability_event(
+                source="chatbot",
+                event_type="chat.text_to_sql_success",
+                action="readonly_query",
+                success=True,
+                user_id=user_id,
+                session_id=session_id,
+                client_ip=client_ip,
+                detail={"row_count": len(rows)},
+            )
             resp: Dict[str, str | int | dict] = {
                 "session_id": session_id,
                 "reply": reply,
@@ -485,6 +536,15 @@ def handle_chat_message(
                 }
             return resp
         except Exception:
+            log_observability_event(
+                source="chatbot",
+                event_type="chat.text_to_sql_failed",
+                action="readonly_query",
+                success=False,
+                user_id=user_id,
+                session_id=session_id,
+                client_ip=client_ip,
+            )
             return {
                 "session_id": session_id,
                 "reply": "I can answer read-only DRINKOO data questions about SKUs, flavors, prices, sales, and states.",
@@ -495,6 +555,15 @@ def handle_chat_message(
     context_chunks = _retrieve_context(message)
 
     if not context_chunks:
+        log_observability_event(
+            source="chatbot",
+            event_type="chat.retrieval_empty",
+            action="vector_retrieval",
+            success=False,
+            user_id=user_id,
+            session_id=session_id,
+            client_ip=client_ip,
+        )
         return {
             "session_id": session_id,
             "reply": "I could not find a close SKU match. Ask for a flavor, size, or budget and I will suggest one.",
@@ -504,6 +573,25 @@ def handle_chat_message(
     try:
         reply = _openrouter_chat(message, context_chunks)
     except Exception:
+        log_observability_event(
+            source="chatbot",
+            event_type="chat.model_failed",
+            action="llm_completion",
+            success=False,
+            user_id=user_id,
+            session_id=session_id,
+            client_ip=client_ip,
+        )
         reply = "I can help you choose from DRINKOO flavors and SKUs. Tell me your preferred flavor and size."
+
+    log_observability_event(
+        source="chatbot",
+        event_type="chat.response_sent",
+        action="reply",
+        success=True,
+        user_id=user_id,
+        session_id=session_id,
+        client_ip=client_ip,
+    )
 
     return {"session_id": session_id, "reply": reply, "remaining_messages": remaining}

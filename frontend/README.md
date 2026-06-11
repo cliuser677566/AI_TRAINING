@@ -35,6 +35,8 @@ npm run dev
 
 Default URL: `http://localhost:5173`
 
+Status page URL: `http://localhost:5173/status`
+
 ## Build
 
 ```powershell

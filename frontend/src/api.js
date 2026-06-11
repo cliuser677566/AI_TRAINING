@@ -82,3 +82,32 @@ export function sendChatMessage(message, sessionId, options = {}) {
     body: JSON.stringify(body)
   });
 }
+
+export async function postTelemetryEvent(payload) {
+  return apiRequest("/telemetry/events", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function checkBackendHealth() {
+  const response = await fetch(`${API_BASE_URL}/`, {
+    method: "GET",
+    headers: { "Content-Type": "application/json" }
+  });
+  if (!response.ok) {
+    throw new Error(`Health check failed with status ${response.status}`);
+  }
+  return response.json();
+}
+
+export async function getServiceStatus() {
+  const response = await fetch(`${API_BASE_URL}/status`, {
+    method: "GET",
+    headers: { "Content-Type": "application/json" }
+  });
+  if (!response.ok) {
+    throw new Error(`Status check failed with status ${response.status}`);
+  }
+  return response.json();
+}
