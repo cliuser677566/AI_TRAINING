@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from backend.app.api.routers import states, skus, customers, auth, sales, shipments, analytics
+from backend.app.api.routers import states, skus, customers, auth, sales, shipments, analytics, chatbot
 
 app = FastAPI(title="DRNKOO Backend API")
 
@@ -19,6 +19,7 @@ app.include_router(customers.router)
 app.include_router(sales.router)
 app.include_router(shipments.router)
 app.include_router(analytics.router)
+app.include_router(chatbot.router)
 
 
 @app.get("/")

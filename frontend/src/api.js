@@ -64,3 +64,10 @@ export function getSalesByState() {
 export function getSkuPerformance() {
   return apiRequest("/analytics/sku_performance");
 }
+
+export function sendChatMessage(message, sessionId) {
+  return apiRequest("/chatbot/message", {
+    method: "POST",
+    body: JSON.stringify({ message, session_id: sessionId })
+  });
+}

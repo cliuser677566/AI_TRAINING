@@ -7,7 +7,8 @@ import {
   getSkus,
   getStates,
   ingestSales,
-  login
+  login,
+  sendChatMessage
 } from "./api";
 
 const VALID_VOLUMES = [200, 400, 500, 750, 1000, 1500, 2000];
@@ -83,6 +84,17 @@ export default function App() {
     active: true
   });
 
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatInput, setChatInput] = useState("");
+  const [chatLoading, setChatLoading] = useState(false);
+  const [chatSessionId, setChatSessionId] = useState(localStorage.getItem("drinkoo_chat_session") || "");
+  const [chatMessages, setChatMessages] = useState([
+    {
+      role: "assistant",
+      text: "Hi, I can help with DRINKOO SKUs, flavors, and placing an order request."
+    }
+  ]);
+
   const filteredSalesByState = useMemo(() => {
     if (selectedStateId === "all") {
       return salesByState;
@@ -129,6 +141,35 @@ export default function App() {
   function logout() {
     localStorage.removeItem("drinkoo_token");
     setToken(null);
+  }
+
+  async function submitChat(e) {
+    e.preventDefault();
+    const text = chatInput.trim();
+    if (!text || chatLoading) {
+      return;
+    }
+
+    setChatMessages((prev) => [...prev, { role: "user", text }]);
+    setChatInput("");
+    setChatLoading(true);
+
+    try {
+      const result = await sendChatMessage(text, chatSessionId || null);
+      if (result.session_id && result.session_id !== chatSessionId) {
+        setChatSessionId(result.session_id);
+        localStorage.setItem("drinkoo_chat_session", result.session_id);
+      }
+      const suffix =
+        typeof result.remaining_messages === "number"
+          ? ` (remaining: ${result.remaining_messages})`
+          : "";
+      setChatMessages((prev) => [...prev, { role: "assistant", text: `${result.reply}${suffix}` }]);
+    } catch (err) {
+      setChatMessages((prev) => [...prev, { role: "assistant", text: "Chat is temporarily unavailable. Please try again." }]);
+    } finally {
+      setChatLoading(false);
+    }
   }
 
   async function submitSale(e) {
@@ -403,6 +444,34 @@ export default function App() {
       </section>
 
       {statusMessage ? <div className="toast">{statusMessage}</div> : null}
+
+      <button className="chat-toggle" onClick={() => setChatOpen((v) => !v)}>
+        {chatOpen ? "Close Chat" : "Chat with DRINKOO"}
+      </button>
+
+      {chatOpen ? (
+        <div className="chat-window card">
+          <div className="chat-header">DRINKOO Assistant</div>
+          <div className="chat-body">
+            {chatMessages.map((m, idx) => (
+              <div key={`${m.role}-${idx}`} className={`chat-msg ${m.role}`}>
+                {m.text}
+              </div>
+            ))}
+          </div>
+          <form className="chat-form" onSubmit={submitChat}>
+            <input
+              value={chatInput}
+              onChange={(e) => setChatInput(e.target.value)}
+              placeholder="Ask about flavors, SKU, or order"
+              maxLength={400}
+            />
+            <button type="submit" disabled={chatLoading}>
+              {chatLoading ? "..." : "Send"}
+            </button>
+          </form>
+        </div>
+      ) : null}
     </div>
   );
 }
