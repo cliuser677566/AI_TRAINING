@@ -12,6 +12,8 @@ import {
 } from "./api";
 
 const VALID_VOLUMES = [200, 400, 500, 750, 1000, 1500, 2000];
+const CHAT_SQL_DEBUG_ENABLED = import.meta.env.VITE_CHATBOT_SQL_DEBUG_ENABLED === "1";
+const CHAT_SQL_DEBUG_TOKEN = import.meta.env.VITE_CHATBOT_SQL_DEBUG_TOKEN || "";
 
 function Login({ onLogin, error }) {
   const [username, setUsername] = useState("admin");
@@ -94,6 +96,7 @@ export default function App() {
       text: "Hi, I can help with DRINKOO SKUs, flavors, and placing an order request."
     }
   ]);
+  const [chatSqlDebug, setChatSqlDebug] = useState(false);
 
   const filteredSalesByState = useMemo(() => {
     if (selectedStateId === "all") {
@@ -155,7 +158,10 @@ export default function App() {
     setChatLoading(true);
 
     try {
-      const result = await sendChatMessage(text, chatSessionId || null);
+      const result = await sendChatMessage(text, chatSessionId || null, {
+        debugSql: CHAT_SQL_DEBUG_ENABLED && chatSqlDebug,
+        debugToken: CHAT_SQL_DEBUG_ENABLED ? CHAT_SQL_DEBUG_TOKEN : ""
+      });
       if (result.session_id && result.session_id !== chatSessionId) {
         setChatSessionId(result.session_id);
         localStorage.setItem("drinkoo_chat_session", result.session_id);
@@ -164,7 +170,8 @@ export default function App() {
         typeof result.remaining_messages === "number"
           ? ` (remaining: ${result.remaining_messages})`
           : "";
-      setChatMessages((prev) => [...prev, { role: "assistant", text: `${result.reply}${suffix}` }]);
+      const debugSqlText = result.debug?.sql ? `\nSQL: ${result.debug.sql}` : "";
+      setChatMessages((prev) => [...prev, { role: "assistant", text: `${result.reply}${suffix}${debugSqlText}` }]);
     } catch (err) {
       setChatMessages((prev) => [...prev, { role: "assistant", text: "Chat is temporarily unavailable. Please try again." }]);
     } finally {
@@ -452,6 +459,18 @@ export default function App() {
       {chatOpen ? (
         <div className="chat-window card">
           <div className="chat-header">DRINKOO Assistant</div>
+          {CHAT_SQL_DEBUG_ENABLED ? (
+            <div className="chat-debug-row">
+              <label className="chat-debug-toggle">
+                <input
+                  type="checkbox"
+                  checked={chatSqlDebug}
+                  onChange={(e) => setChatSqlDebug(e.target.checked)}
+                />
+                SQL debug (admin only)
+              </label>
+            </div>
+          ) : null}
           <div className="chat-body">
             {chatMessages.map((m, idx) => (
               <div key={`${m.role}-${idx}`} className={`chat-msg ${m.role}`}>

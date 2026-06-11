@@ -65,9 +65,20 @@ export function getSkuPerformance() {
   return apiRequest("/analytics/sku_performance");
 }
 
-export function sendChatMessage(message, sessionId) {
+export function sendChatMessage(message, sessionId, options = {}) {
+  const body = { message, session_id: sessionId };
+  if (options.debugSql) {
+    body.debug_sql = true;
+  }
+
+  const headers = {};
+  if (options.debugToken) {
+    headers["X-Chatbot-Debug-Token"] = options.debugToken;
+  }
+
   return apiRequest("/chatbot/message", {
     method: "POST",
-    body: JSON.stringify({ message, session_id: sessionId })
+    headers,
+    body: JSON.stringify(body)
   });
 }

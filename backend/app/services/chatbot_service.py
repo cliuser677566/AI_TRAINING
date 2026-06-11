@@ -81,8 +81,213 @@ def _is_domain_relevant(message: str) -> bool:
         "order",
         "buy",
         "shipment",
+        "sales",
+        "revenue",
+        "state",
+        "top",
+        "count",
+        "how many",
     ]
     return any(k in m for k in keywords)
+
+
+def _is_text_to_sql_intent(message: str) -> bool:
+    m = message.lower()
+    intents = [
+        "how many",
+        "count",
+        "top",
+        "list",
+        "show",
+        "revenue",
+        "sales",
+        "price",
+        "available",
+        "flavor",
+        "flavour",
+        "sku",
+        "state",
+    ]
+    return any(k in m for k in intents)
+
+
+def _extract_flavor_term(message: str) -> str | None:
+    flavors = [
+        "cola",
+        "lemon",
+        "orange",
+        "grape",
+        "strawberry",
+        "mango",
+        "pineapple",
+        "watermelon",
+        "peach",
+        "berries",
+        "berry",
+        "apple",
+        "pomegranate",
+        "cranberry",
+        "mint",
+        "ginger",
+        "coconut",
+        "sugarcane",
+    ]
+    m = message.lower()
+    for f in flavors:
+        if f in m:
+            return f
+    return None
+
+
+def _build_text_to_sql(message: str) -> Tuple[str, Tuple]:
+    m = message.lower()
+    flavor = _extract_flavor_term(message)
+
+    if "how many" in m and "sku" in m:
+        return (
+            "SELECT COUNT(*) AS total_active_skus FROM skus WHERE active_status = 1",
+            (),
+        )
+
+    if ("how many" in m or "count" in m) and "customer" in m:
+        return ("SELECT COUNT(*) AS total_customers FROM customers", ())
+
+    if "flavor" in m or "flavour" in m:
+        if flavor:
+            return (
+                """
+                SELECT sku_id, product_name, volume_ml, suggested_retail_price
+                FROM skus
+                WHERE active_status = 1 AND lower(product_name) LIKE ?
+                ORDER BY suggested_retail_price ASC
+                LIMIT 10
+                """,
+                (f"%{flavor}%",),
+            )
+        return (
+            """
+            SELECT sku_id, product_name, volume_ml, suggested_retail_price
+            FROM skus
+            WHERE active_status = 1
+            ORDER BY product_name
+            LIMIT 12
+            """,
+            (),
+        )
+
+    if "price" in m and ("sku" in m or flavor):
+        if flavor:
+            return (
+                """
+                SELECT sku_id, product_name, volume_ml, suggested_retail_price
+                FROM skus
+                WHERE active_status = 1 AND lower(product_name) LIKE ?
+                ORDER BY suggested_retail_price ASC
+                LIMIT 8
+                """,
+                (f"%{flavor}%",),
+            )
+        return (
+            """
+            SELECT sku_id, product_name, volume_ml, suggested_retail_price
+            FROM skus
+            WHERE active_status = 1
+            ORDER BY suggested_retail_price DESC
+            LIMIT 10
+            """,
+            (),
+        )
+
+    if "top" in m and "sku" in m:
+        return (
+            """
+            SELECT st.sku_id, sk.product_name, SUM(st.quantity_units) AS units_sold, SUM(st.transaction_amount) AS revenue
+            FROM sales_transactions st
+            JOIN skus sk ON sk.sku_id = st.sku_id
+            GROUP BY st.sku_id, sk.product_name
+            ORDER BY revenue DESC
+            LIMIT 5
+            """,
+            (),
+        )
+
+    if "revenue" in m and "state" in m:
+        return (
+            """
+            SELECT s.state_name, SUM(st.transaction_amount) AS revenue
+            FROM sales_transactions st
+            JOIN states s ON s.state_id = st.state_id
+            GROUP BY s.state_name
+            ORDER BY revenue DESC
+            LIMIT 8
+            """,
+            (),
+        )
+
+    if "state" in m and ("list" in m or "show" in m):
+        return (
+            """
+            SELECT state_id, state_name, capital_city, total_customers
+            FROM states
+            ORDER BY state_name
+            LIMIT 15
+            """,
+            (),
+        )
+
+    # Default SKU browse query for shopping-oriented prompts.
+    return (
+        """
+        SELECT sku_id, product_name, volume_ml, suggested_retail_price
+        FROM skus
+        WHERE active_status = 1
+        ORDER BY product_name
+        LIMIT 10
+        """,
+        (),
+    )
+
+
+def _safe_run_readonly_query(sql: str, params: Tuple) -> Tuple[List[str], List[Tuple]]:
+    compact_sql = " ".join(sql.strip().split()).lower()
+    forbidden = ["insert", "update", "delete", "drop", "alter", "pragma", "attach", "detach"]
+    if not compact_sql.startswith("select") or any(tok in compact_sql for tok in forbidden):
+        raise ValueError("Only read-only SELECT queries are allowed")
+
+    allowed_tables = [
+        "skus",
+        "sku_categories",
+        "states",
+        "customers",
+        "sales_transactions",
+        "shipments",
+        "shipment_tracking",
+        "sku_distribution_by_state",
+        "inventory_by_state",
+    ]
+    if not any(tbl in compact_sql for tbl in allowed_tables):
+        raise ValueError("Query references unsupported tables")
+
+    conn = sqlite3.connect(DATABASE_PATH)
+    try:
+        cur = conn.cursor()
+        cur.execute(sql, params)
+        cols = [d[0] for d in cur.description] if cur.description else []
+        rows = cur.fetchmany(10)
+        return cols, rows
+    finally:
+        conn.close()
+
+
+def _format_sql_result_reply(cols: List[str], rows: List[Tuple]) -> str:
+    if not rows:
+        return "I found no matching records in DRINKOO data for that query."
+
+    lines = []
+    for row in rows[:5]:
+        pair_text = ", ".join(f"{c}: {v}" for c, v in zip(cols, row))
+        lines.append(f"- {pair_text}")
+    return "Here are results from DRINKOO data:\n" + "\n".join(lines)
 
 
 def _ensure_vector_table(conn: sqlite3.Connection) -> None:
@@ -224,7 +429,11 @@ def _openrouter_chat(message: str, context_chunks: List[str]) -> str:
     return data["choices"][0]["message"]["content"].strip()
 
 
-def handle_chat_message(message: str, session_id: str | None) -> Dict[str, str | int]:
+def handle_chat_message(
+    message: str,
+    session_id: str | None,
+    include_sql_debug: bool = False,
+) -> Dict[str, str | int | dict]:
     if not session_id:
         session_id = f"sess_{uuid.uuid4().hex[:12]}"
 
@@ -256,6 +465,31 @@ def handle_chat_message(message: str, session_id: str | None) -> Dict[str, str |
             "reply": "I can only answer DRINKOO SKU, flavor, recommendation, and order-related questions.",
             "remaining_messages": remaining,
         }
+
+    # Text-to-SQL path: generate safe read-only SQL from user intent and return concise results.
+    if _is_text_to_sql_intent(message):
+        try:
+            sql, params = _build_text_to_sql(message)
+            cols, rows = _safe_run_readonly_query(sql, params)
+            reply = _format_sql_result_reply(cols, rows)
+            resp: Dict[str, str | int | dict] = {
+                "session_id": session_id,
+                "reply": reply,
+                "remaining_messages": remaining,
+            }
+            if include_sql_debug:
+                resp["debug"] = {
+                    "sql": " ".join(sql.strip().split()),
+                    "params": [str(p) for p in params],
+                    "row_count": len(rows),
+                }
+            return resp
+        except Exception:
+            return {
+                "session_id": session_id,
+                "reply": "I can answer read-only DRINKOO data questions about SKUs, flavors, prices, sales, and states.",
+                "remaining_messages": remaining,
+            }
 
     ensure_vector_index()
     context_chunks = _retrieve_context(message)

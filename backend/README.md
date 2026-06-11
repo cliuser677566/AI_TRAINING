@@ -49,6 +49,15 @@ Guardrails in chatbot:
 - Answers only DRINKOO SKU/flavor/order topics.
 - Blocks prompt-injection style requests and DB-modification intents.
 
+Optional admin SQL debug mode (disabled by default):
+- Set env vars:
+	- `CHATBOT_SQL_DEBUG_ENABLED=1`
+	- `CHATBOT_SQL_DEBUG_TOKEN=<strong-random-token>`
+- Call `/chatbot/message` with:
+	- body: `{ "message": "...", "debug_sql": true }`
+	- header: `X-Chatbot-Debug-Token: <same-token>`
+- Without both env + token, SQL debug metadata is not returned.
+
 Examples:
 
 - Ingest sales (POST /sales/ingest):
