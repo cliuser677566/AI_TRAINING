@@ -17,6 +17,18 @@ import {
 const VALID_VOLUMES = [200, 400, 500, 750, 1000, 1500, 2000];
 const CHAT_SQL_DEBUG_ENABLED = import.meta.env.VITE_CHATBOT_SQL_DEBUG_ENABLED === "1";
 const CHAT_SQL_DEBUG_TOKEN = import.meta.env.VITE_CHATBOT_SQL_DEBUG_TOKEN || "";
+const CONTRACTORS = [
+  { contractor_id: "CNT-001", name: "RapidRoute Logistics", region: "Maharashtra", service: "Distribution", contact: "+91-9876543201", status: "Active" },
+  { contractor_id: "CNT-002", name: "NorthLine Carriers", region: "Delhi", service: "Interstate Freight", contact: "+91-9876543202", status: "Active" },
+  { contractor_id: "CNT-003", name: "BluePeak Supply", region: "Karnataka", service: "Warehouse Ops", contact: "+91-9876543203", status: "Active" },
+  { contractor_id: "CNT-004", name: "CitrusMove Transport", region: "Tamil Nadu", service: "Last-Mile", contact: "+91-9876543204", status: "Onboarding" },
+  { contractor_id: "CNT-005", name: "Eastern Haul Works", region: "West Bengal", service: "Regional Freight", contact: "+91-9876543205", status: "Active" },
+  { contractor_id: "CNT-006", name: "Frontier Cold Chain", region: "Punjab", service: "Cold Storage", contact: "+91-9876543206", status: "Active" },
+  { contractor_id: "CNT-007", name: "Coast2Coast Movers", region: "Gujarat", service: "Bulk Dispatch", contact: "+91-9876543207", status: "Paused" },
+  { contractor_id: "CNT-008", name: "Velocity Yard Services", region: "Rajasthan", service: "Loading Crew", contact: "+91-9876543208", status: "Active" },
+  { contractor_id: "CNT-009", name: "GreenWheel Network", region: "Kerala", service: "Eco Delivery", contact: "+91-9876543209", status: "Onboarding" },
+  { contractor_id: "CNT-010", name: "Riverbend Fleet Co.", region: "Uttar Pradesh", service: "City Distribution", contact: "+91-9876543210", status: "Active" }
+];
 
 function Login({ onLogin, error }) {
   const [username, setUsername] = useState("admin");
@@ -146,7 +158,58 @@ function StatusPage() {
   );
 }
 
+function ContractorsPage() {
+  return (
+    <div className="status-shell">
+      <div className="contractors-card card">
+        <div className="contractors-head">
+          <div>
+            <h1>Contractors Directory</h1>
+            <p>Operational vendors used for DRINKOO distribution and logistics.</p>
+          </div>
+          <a className="nav-link-btn" href="/">
+            Back To Dashboard
+          </a>
+        </div>
+
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Contractor ID</th>
+                <th>Name</th>
+                <th>Region</th>
+                <th>Service</th>
+                <th>Contact</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {CONTRACTORS.map((contractor) => (
+                <tr key={contractor.contractor_id}>
+                  <td>{contractor.contractor_id}</td>
+                  <td>{contractor.name}</td>
+                  <td>{contractor.region}</td>
+                  <td>{contractor.service}</td>
+                  <td>{contractor.contact}</td>
+                  <td>
+                    <span className={`contractor-status ${contractor.status.toLowerCase()}`}>{contractor.status}</span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
+  if (window.location.pathname === "/contractors") {
+    return <ContractorsPage />;
+  }
+
   if (window.location.pathname === "/status") {
     return <StatusPage />;
   }
@@ -483,6 +546,12 @@ export default function App() {
           </div>
         </div>
         <div className="topbar-actions">
+          <a className="nav-link-btn" href="/contractors">
+            Contractors
+          </a>
+          <a className="nav-link-btn" href="/status">
+            Status
+          </a>
           <select value={selectedStateId} onChange={(e) => setSelectedStateId(e.target.value)}>
             <option value="all">All States / UTs</option>
             {states.map((s) => (
